@@ -12,6 +12,7 @@ pub enum Status {
     Utf8Error,
     Ok,
     InvalidHeader,
+    InvalidHeaderStart,
     InvalidHeaderDeserialization,
     HeaderTooLarge,
     HeaderTooSmall,
@@ -24,6 +25,7 @@ pub enum Status {
     InvalidTensorView,
     MetadataIncompleteBuffer,
     ValidationOverflow,
+    MisalignedSlice,
 }
 
 #[derive(Debug, Error)]
@@ -45,8 +47,9 @@ impl Into<Status> for CError {
             CError::NullPointer(_) => Status::NullPointer,
             CError::Utf8Error(_) => Status::Utf8Error,
             CError::SafeTensorError(err) => match err {
-                SafeTensorError::InvalidHeader => Status::InvalidHeader,
-                SafeTensorError::InvalidHeaderDeserialization => {
+                SafeTensorError::InvalidHeader(_) => Status::InvalidHeader,
+                SafeTensorError::InvalidHeaderStart => Status::InvalidHeaderStart,
+                SafeTensorError::InvalidHeaderDeserialization(_) => {
                     Status::InvalidHeaderDeserialization
                 }
                 SafeTensorError::HeaderTooLarge => Status::HeaderTooLarge,
@@ -60,6 +63,7 @@ impl Into<Status> for CError {
                 SafeTensorError::InvalidTensorView(_, _, _) => Status::InvalidTensorView,
                 SafeTensorError::MetadataIncompleteBuffer => Status::MetadataIncompleteBuffer,
                 SafeTensorError::ValidationOverflow => Status::ValidationOverflow,
+                SafeTensorError::MisalignedSlice => Status::MisalignedSlice,
             },
         }
     }
@@ -221,7 +225,7 @@ pub unsafe extern "C" fn safetensors_names(
         .into_iter()
         .map(|name| {
             // Nul-terminated string
-            let s = CString::from_vec_unchecked(name.clone().into_bytes());
+            let s = CString::from_vec_unchecked(name.bytes().collect());
             let ptr = s.as_ptr();
 
             // Advise Rust we will take care of the desallocation (see `safetensors_free_names`)
@@ -287,6 +291,15 @@ pub unsafe extern "C" fn safetensors_num_tensors(handle: *const Handle) -> usize
 ///
 /// returns: usize Number of bytes for this specific `dtype`
 #[no_mangle]
+pub extern "C" fn safetensors_dtype_bitsize(dtype: Dtype) -> usize {
+    dtype.to_dtype().bitsize()
+}
+
+#[no_mangle]
+#[deprecated(
+    since = "0.6.0",
+    note = "Use `safetensors_dtype_size` instead as some elements have smaller than a full byte of width"
+)]
 pub extern "C" fn safetensors_dtype_size(dtype: Dtype) -> usize {
     dtype.to_dtype().size()
 }

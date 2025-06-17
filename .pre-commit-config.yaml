@@ -43,7 +43,3 @@ repos:
     hooks:
       - id: flake8
         args: ["--config", "bindings/python/setup.cfg"]
-  - repo: https://github.com/pre-commit/mirrors-isort
-    rev: v5.7.0 # Use the revision sha / tag you want to point at
-    hooks:
-      - id: isort
