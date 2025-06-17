@@ -1,24 +1,119 @@
+import sys
 import unittest
 
 import torch
+from packaging.version import Version
 
 from safetensors import safe_open
 from safetensors.torch import load, load_file, save, save_file
 
 
+try:
+    import torch_npu  # noqa
+
+    npu_present = True
+except Exception:
+    npu_present = False
+
+
 class TorchTestCase(unittest.TestCase):
+    def test_serialization(self):
+        data = torch.zeros((2, 2), dtype=torch.int32)
+        out = save({"test": data})
+
+        self.assertEqual(
+            out,
+            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"I32","shape":[2,2],"data_offsets":[0,16]}}   '
+            b" \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        )
+
+        save_file({"test": data}, "serialization.safetensors")
+        out = open("serialization.safetensors", "rb").read()
+        self.assertEqual(
+            out,
+            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"I32","shape":[2,2],"data_offsets":[0,16]}}   '
+            b" \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        )
+
+        data[1, 1] = 1
+        out = save({"test": data})
+
+        self.assertEqual(
+            out,
+            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"I32","shape":[2,2],"data_offsets":[0,16]}}   '
+            b" \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00",
+        )
+        save_file({"test": data}, "serialization.safetensors")
+        out = open("serialization.safetensors", "rb").read()
+        self.assertEqual(
+            out,
+            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"I32","shape":[2,2],"data_offsets":[0,16]}}   '
+            b" \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00",
+        )
+
+        data = torch.ones((2, 2), dtype=torch.bfloat16)
+        data[0, 0] = 2.25
+        out = save({"test": data})
+        self.assertEqual(
+            out,
+            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"BF16","shape":[2,2],"data_offsets":[0,8]}}    \x10@\x80?\x80?\x80?',
+        )
+
     def test_odd_dtype(self):
         data = {
-            "test": torch.zeros((2, 2), dtype=torch.bfloat16),
-            "test2": torch.zeros((2, 2), dtype=torch.float16),
+            "test": torch.randn((2, 2), dtype=torch.bfloat16),
+            "test2": torch.randn((2, 2), dtype=torch.float16),
             "test3": torch.zeros((2, 2), dtype=torch.bool),
         }
+
+        # Modify bool to have both values.
+        data["test3"][0, 0] = True
         local = "./tests/data/out_safe_pt_mmap_small.safetensors"
+
         save_file(data, local)
         reloaded = load_file(local)
         self.assertTrue(torch.equal(data["test"], reloaded["test"]))
         self.assertTrue(torch.equal(data["test2"], reloaded["test2"]))
         self.assertTrue(torch.equal(data["test3"], reloaded["test3"]))
+
+    def test_odd_dtype_fp8(self):
+        if torch.__version__ < "2.1":
+            return  # torch.float8 requires 2.1
+
+        data = {
+            "test1": torch.tensor([-0.5], dtype=torch.float8_e4m3fn),
+            "test2": torch.tensor([-0.5], dtype=torch.float8_e5m2),
+        }
+        local = "./tests/data/out_safe_pt_mmap_small.safetensors"
+
+        save_file(data, local)
+        reloaded = load_file(local)
+        # note: PyTorch doesn't implement torch.equal for float8 so we just compare the single element
+        self.assertEqual(reloaded["test1"].dtype, torch.float8_e4m3fn)
+        self.assertEqual(reloaded["test1"].item(), -0.5)
+        self.assertEqual(reloaded["test2"].dtype, torch.float8_e5m2)
+        self.assertEqual(reloaded["test2"].item(), -0.5)
+
+    def test_odd_dtype_fp4(self):
+        if Version(torch.__version__) <= Version("2.7"):
+            return  # torch.float4 requires 2.8
+
+        test1 = torch.tensor([0.0], dtype=torch.float8_e8m0fnu)
+        test2 = torch.empty(2, 2, device="cpu", dtype=torch.float4_e2m1fn_x2)
+        data = {
+            "test1": test1,
+            "test2": test2,
+        }
+        local = "./tests/data/out_safe_pt_mmap_fp4.safetensors"
+
+        save_file(data, local)
+        reloaded = load_file(local)
+        # note: PyTorch doesn't implement torch.equal for float8 so we just compare the single element
+        self.assertEqual(reloaded["test1"].dtype, torch.float8_e8m0fnu)
+        self.assertEqual(reloaded["test1"], test1)
+        self.assertEqual(reloaded["test2"].dtype, torch.float4_e2m1fn_x2)
+        # TODO RuntimeError: "eq_cpu" not implemented for 'Float4_e2m1fn_x2'
+        # self.assertEqual(reloaded["test2"], test2)
 
     def test_zero_sized(self):
         data = {
@@ -28,6 +123,38 @@ class TorchTestCase(unittest.TestCase):
         save_file(data, local)
         reloaded = load_file(local)
         self.assertTrue(torch.equal(data["test"], reloaded["test"]))
+        reloaded = load(open(local, "rb").read())
+        self.assertTrue(torch.equal(data["test"], reloaded["test"]))
+
+    def test_multiple_zero_sized(self):
+        data = {
+            "test": torch.zeros((2, 0), dtype=torch.float),
+            "test2": torch.zeros((2, 0), dtype=torch.float),
+        }
+        local = "./tests/data/out_safe_pt_mmap_small3.safetensors"
+        save_file(data, local)
+        reloaded = load_file(local)
+        self.assertTrue(torch.equal(data["test"], reloaded["test"]))
+        self.assertTrue(torch.equal(data["test2"], reloaded["test2"]))
+
+    def test_disjoint_tensors_shared_storage(self):
+        A = torch.zeros((10, 10))
+        data = {
+            "test": A[1:],
+            "test2": A[:1],
+        }
+        local = "./tests/data/out_safe_pt_mmap_small4.safetensors"
+        save_file(data, local)
+
+    def test_meta_tensor(self):
+        A = torch.zeros((10, 10), device=torch.device("meta"))
+        data = {
+            "test": A,
+        }
+        local = "./tests/data/out_safe_pt_mmap_small5.safetensors"
+        with self.assertRaises(RuntimeError) as ex:
+            save_file(data, local)
+        self.assertIn("Cannot copy out of meta tensor", str(ex.exception))
 
     def test_in_memory(self):
         data = {
@@ -37,7 +164,8 @@ class TorchTestCase(unittest.TestCase):
         self.assertEqual(
             binary,
             # Spaces are for forcing the alignment.
-            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"F32","shape":[2,2],"data_offsets":[0,16]}}    \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+            b'@\x00\x00\x00\x00\x00\x00\x00{"test":{"dtype":"F32","shape":[2,2],"data_offsets":[0,16]}}   '
+            b" \x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         )
         reloaded = load(binary)
         self.assertTrue(torch.equal(data["test"], reloaded["test"]))
@@ -52,6 +180,64 @@ class TorchTestCase(unittest.TestCase):
         reloaded = load_file(local)
         self.assertTrue(torch.equal(torch.arange(4).view((2, 2)), reloaded["test"]))
 
+    @unittest.skipIf(not torch.cuda.is_available(), "Cuda is not available")
+    def test_gpu_default_device(self):
+        data = {
+            "test": torch.arange(4).view((2, 2)).to("cuda:0"),
+        }
+        local = "./tests/data/out_safe_pt_mmap_small.safetensors"
+        save_file(data, local)
+        with torch.device("cuda:0"):
+            reloaded = load_file(local)
+            assert reloaded["test"].device == torch.device("cpu")
+            reloaded = load_file(local, device="cuda:0")
+            assert reloaded["test"].device == torch.device("cuda:0")
+            self.assertTrue(torch.equal(torch.arange(4).view((2, 2)), reloaded["test"]))
+
+    @unittest.skipIf(not npu_present, "Npu is not available")
+    def test_npu(self):
+        data = {
+            "test1": torch.zeros((2, 2), dtype=torch.float32).to("npu:0"),
+            "test2": torch.zeros((2, 2), dtype=torch.float16).to("npu:0"),
+        }
+        local = "./tests/data/out_safe_pt_mmap_small_npu.safetensors"
+        save_file(data, local)
+
+        reloaded = load_file(local, device="npu:0")
+        for k, v in reloaded.items():
+            self.assertTrue(torch.allclose(data[k], reloaded[k]))
+
+    def test_hpu(self):
+        # must be run to load torch with Intel Gaudi bindings
+        try:
+            import habana_frameworks.torch.core as htcore  # noqa: F401
+        except ImportError:
+            self.skipTest("HPU is not available")
+
+        data = {
+            "test1": torch.zeros((2, 2), dtype=torch.float32).to("hpu"),
+            "test2": torch.zeros((2, 2), dtype=torch.float16).to("hpu"),
+        }
+        local = "./tests/data/out_safe_pt_mmap_small_hpu.safetensors"
+        save_file(data, local)
+
+        reloaded = load_file(local, device="hpu")
+        for k, v in reloaded.items():
+            self.assertTrue(torch.allclose(data[k], reloaded[k]))
+
+    @unittest.skipIf(not torch.cuda.is_available(), "Cuda is not available")
+    def test_anonymous_accelerator(self):
+        data = {
+            "test1": torch.zeros((2, 2), dtype=torch.float32).to(device=0),
+            "test2": torch.zeros((2, 2), dtype=torch.float16).to(device=0),
+        }
+        local = "./tests/data/out_safe_pt_mmap_small_anonymous.safetensors"
+        save_file(data, local)
+
+        reloaded = load_file(local, device=0)
+        for k, v in reloaded.items():
+            self.assertTrue(torch.allclose(data[k], reloaded[k]))
+
     def test_sparse(self):
         data = {"test": torch.sparse_coo_tensor(size=(2, 3))}
         local = "./tests/data/out_safe_pt_sparse.safetensors"
@@ -59,8 +245,8 @@ class TorchTestCase(unittest.TestCase):
             save_file(data, local)
         self.assertEqual(
             str(ctx.exception),
-            "You are trying to save a sparse tensor: `test` which this library does not support. You can make it a"
-            " dense tensor before saving with `.to_dense()` but be aware this might make a much larger file than"
+            "You are trying to save a sparse tensors: `['test']` which this library does not support. You can make it"
+            " a dense tensor before saving with `.to_dense()` but be aware this might make a much larger file than"
             " needed.",
         )
 
@@ -105,6 +291,22 @@ class LoadTestCase(unittest.TestCase):
             tv = tweights[k]
             self.assertTrue(torch.allclose(v, tv))
             self.assertEqual(v.device, torch.device("cpu"))
+
+    @unittest.skipIf(not torch.cuda.is_available(), "Cuda is not available")
+    def test_deserialization_device(self):
+        with torch.device("cuda:0"):
+            weights = load_file(self.sf_filename)
+            self.assertEqual(weights["test"].device, torch.device("cpu"))
+
+        torch.set_default_device(torch.device("cuda:0"))
+        weights = load_file(self.sf_filename)
+        self.assertEqual(weights["test"].device, torch.device("cpu"))
+        torch.set_default_device(torch.device("cpu"))
+
+        torch.set_default_device(torch.device(0))
+        weights = load_file(self.sf_filename)
+        self.assertEqual(weights["test"].device, torch.device("cpu"))
+        torch.set_default_device(torch.device("cpu"))
 
     @unittest.skipIf(not torch.cuda.is_available(), "Cuda is not available")
     def test_deserialization_safe_gpu(self):
@@ -175,15 +377,22 @@ class SliceTestCase(unittest.TestCase):
 
     def test_deserialization_slice(self):
         with safe_open(self.local, framework="pt") as f:
-            tensor = f.get_slice("test")[:, :, 1:2]
-
-        self.assertEqual(
-            tensor.numpy().tobytes(),
-            b"\x00\x00\x80?\x00\x00\x80@",
-        )
+            _slice = f.get_slice("test")
+            self.assertEqual(_slice.get_shape(), [1, 2, 3])
+            self.assertEqual(_slice.get_dtype(), "F32")
+            tensor = _slice[:, :, 1:2]
 
         self.assertTrue(torch.equal(tensor, torch.Tensor([[[1.0], [4.0]]])))
         self.assertTrue(torch.equal(tensor, self.tensor[:, :, 1:2]))
+
+        buffer = tensor.numpy()
+        if sys.byteorder == "big":
+            buffer.byteswap(inplace=True)
+        buffer = buffer.tobytes()
+        self.assertEqual(
+            buffer,
+            b"\x00\x00\x80?\x00\x00\x80@",
+        )
 
     def test_deserialization_metadata(self):
         with safe_open(self.local, framework="pt") as f:

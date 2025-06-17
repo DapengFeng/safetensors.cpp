@@ -20,6 +20,14 @@ def storage_ptr(tensor: torch.Tensor) -> int:
             return 0
 
 
+def _end_ptr(tensor: torch.Tensor) -> int:
+    if tensor.nelement():
+        stop = tensor.view(-1)[-1].data_ptr() + _SIZE[tensor.dtype]
+    else:
+        stop = tensor.data_ptr()
+    return stop
+
+
 def storage_size(tensor: torch.Tensor) -> int:
     try:
         return tensor.untyped_storage().nbytes()
@@ -33,13 +41,39 @@ def storage_size(tensor: torch.Tensor) -> int:
             return tensor.nelement() * _SIZE[tensor.dtype]
 
 
+def _filter_shared_not_shared(tensors: List[Set[str]], state_dict: Dict[str, torch.Tensor]) -> List[Set[str]]:
+    filtered_tensors = []
+    for shared in tensors:
+        if len(shared) < 2:
+            filtered_tensors.append(shared)
+            continue
+
+        areas = []
+        for name in shared:
+            tensor = state_dict[name]
+            areas.append((tensor.data_ptr(), _end_ptr(tensor), name))
+        areas.sort()
+
+        _, last_stop, last_name = areas[0]
+        filtered_tensors.append({last_name})
+        for start, stop, name in areas[1:]:
+            if start >= last_stop:
+                filtered_tensors.append({name})
+            else:
+                filtered_tensors[-1].add(name)
+            last_stop = stop
+
+    return filtered_tensors
+
+
 def _find_shared_tensors(state_dict: Dict[str, torch.Tensor]) -> List[Set[str]]:
     tensors = defaultdict(set)
     for k, v in state_dict.items():
-        if v.device != torch.device("meta"):
+        if v.device != torch.device("meta") and storage_ptr(v) != 0 and storage_size(v) != 0:
             # Need to add device as key because of multiple GPU.
-            tensors[(storage_ptr(v), v.device)].add(k)
+            tensors[(v.device, storage_ptr(v), storage_size(v))].add(k)
     tensors = list(sorted(tensors.values()))
+    tensors = _filter_shared_not_shared(tensors, state_dict)
     return tensors
 
 
@@ -48,30 +82,45 @@ def _is_complete(tensor: torch.Tensor) -> bool:
 
 
 def _remove_duplicate_names(
-    state_dict: Dict[str, torch.Tensor], preferred_names: List[str] = None
+    state_dict: Dict[str, torch.Tensor],
+    *,
+    preferred_names: Optional[List[str]] = None,
+    discard_names: Optional[List[str]] = None,
 ) -> Dict[str, List[str]]:
     if preferred_names is None:
         preferred_names = []
     preferred_names = set(preferred_names)
+    if discard_names is None:
+        discard_names = []
+    discard_names = set(discard_names)
 
     shareds = _find_shared_tensors(state_dict)
     to_remove = defaultdict(list)
     for shared in shareds:
-        complete_names = [name for name in shared if _is_complete(state_dict[name])]
+        complete_names = set([name for name in shared if _is_complete(state_dict[name])])
         if not complete_names:
             raise RuntimeError(
-                f"Error while trying to find names to remove to save state dict, but found no suitable name to keep for saving amongst: {shared}. None is covering the entire storage.Refusing to save/load the model since you could be storing much more memory than needed. Please refer to https://huggingface.co/docs/safetensors/torch_shared_tensors for more information. Or open an issue."
+                "Error while trying to find names to remove to save state dict, but found no suitable name to keep"
+                f" for saving amongst: {shared}. None is covering the entire storage.Refusing to save/load the model"
+                " since you could be storing much more memory than needed. Please refer to"
+                " https://huggingface.co/docs/safetensors/torch_shared_tensors for more information. Or open an"
+                " issue."
             )
 
-        preferred = preferred_names.intersection(set(complete_names))
-        # Mecanism to preferentially select keys to keep
-        # coming from the on-disk file to allow\
+        keep_name = sorted(list(complete_names))[0]
+
+        # Mechanism to preferentially select keys to keep
+        # coming from the on-disk file to allow
         # loading models saved with a different choice
         # of keep_name
+        preferred = complete_names.difference(discard_names)
         if preferred:
             keep_name = sorted(list(preferred))[0]
-        else:
-            keep_name = sorted(complete_names)[0]
+
+        if preferred_names:
+            preferred = preferred_names.intersection(complete_names)
+            if preferred:
+                keep_name = sorted(list(preferred))[0]
         for name in sorted(shared):
             if name != keep_name:
                 to_remove[keep_name].append(name)
@@ -79,12 +128,15 @@ def _remove_duplicate_names(
 
 
 def save_model(
-    model: torch.nn.Module, filename: str, metadata: Optional[Dict[str, str]] = None, force_contiguous: bool = True
+    model: torch.nn.Module,
+    filename: str,
+    metadata: Optional[Dict[str, str]] = None,
+    force_contiguous: bool = True,
 ):
     """
     Saves a given torch model to specified filename.
     This method exists specifically to avoid tensor sharing issues which are
-    not allowed in `safetensors`. [More information on tensor sharing](torch_shared_tensors)
+    not allowed in `safetensors`. [More information on tensor sharing](../torch_shared_tensors)
 
     Args:
         model (`torch.nn.Module`):
@@ -124,20 +176,28 @@ def save_model(
         raise ValueError(msg)
 
 
-def load_model(model: torch.nn.Module, filename: str, strict=True) -> Tuple[List[str], List[str]]:
+def load_model(
+    model: torch.nn.Module,
+    filename: Union[str, os.PathLike],
+    strict: bool = True,
+    device: Union[str, int] = "cpu",
+) -> Tuple[List[str], List[str]]:
     """
     Loads a given filename onto a torch model.
     This method exists specifically to avoid tensor sharing issues which are
-    not allowed in `safetensors`. [More information on tensor sharing](torch_shared_tensors)
+    not allowed in `safetensors`. [More information on tensor sharing](../torch_shared_tensors)
 
     Args:
         model (`torch.nn.Module`):
             The model to load onto.
-        filename (`str`):
+        filename (`str`, or `os.PathLike`):
             The filename location to load the file from.
         strict (`bool`, *optional*, defaults to True):
-            Wether to fail if you're missing keys or having unexpected ones
+            Whether to fail if you're missing keys or having unexpected ones.
             When false, the function simply returns missing and unexpected names.
+        device (`Union[str, int]`, *optional*, defaults to `cpu`):
+            The device where the tensors need to be located after load.
+            available options are all regular torch device locations.
 
     Returns:
         `(missing, unexpected): (List[str], List[str])`
@@ -145,26 +205,71 @@ def load_model(model: torch.nn.Module, filename: str, strict=True) -> Tuple[List
             `unexpected` are names that are on the file, but weren't used during
             the load.
     """
-    state_dict = load_file(filename)
+    state_dict = load_file(filename, device=device)
     model_state_dict = model.state_dict()
     to_removes = _remove_duplicate_names(model_state_dict, preferred_names=state_dict.keys())
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    missing = set(missing)
-    for to_remove_group in to_removes.values():
+
+    reverse_to_remove = {}
+    for key, to_remove_group in to_removes.items():
         for to_remove in to_remove_group:
-            if to_remove not in missing:
-                unexpected.append(to_remove)
-            else:
-                missing.remove(to_remove)
-    if strict and (missing or unexpected):
+            reverse_to_remove[to_remove] = key
+
+    # We iterate on the model, so we'll add keys we find missing
+    # here
+    missing = set()
+    # We start with all keys on disk declared as unexpected, we'll
+    # slowly remove them when we find them
+    unexpected = set(state_dict.keys())
+    # Some keys can be invalid too.
+    invalid = set()
+
+    for k, mv in model_state_dict.items():
+        actual_k = reverse_to_remove.get(k, None)
+        if actual_k is not None:
+            look_k = actual_k
+        else:
+            look_k = k
+        v = state_dict.get(look_k, None)
+        if v is None:
+            missing.add(k)
+        else:
+            # We can actually check for the shapes while we're at it.
+            # For the device, it's trickier given torch's internals
+            # There might be some Meta device for faster initiation
+            if v.dtype != mv.dtype or v.shape != mv.shape:
+                invalid.add(k)
+            if actual_k is None:
+                unexpected.remove(k)
+
+    missing = set(missing)
+    unexpected = set(unexpected)
+    if strict and (missing or unexpected or invalid):
         missing_keys = ", ".join([f'"{k}"' for k in sorted(missing)])
         unexpected_keys = ", ".join([f'"{k}"' for k in sorted(unexpected)])
+        invalid_keys = ", ".join([f'"{k}"' for k in sorted(invalid)])
         error = f"Error(s) in loading state_dict for {model.__class__.__name__}:"
         if missing:
             error += f"\n    Missing key(s) in state_dict: {missing_keys}"
         if unexpected:
             error += f"\n    Unexpected key(s) in state_dict: {unexpected_keys}"
+        if invalid:
+            error += f"\n    Invalid key(s) in state_dict: {invalid_keys}, mismatched dtypes or shape."
+        del state_dict
         raise RuntimeError(error)
+
+    torch_missing, torch_unexpected = model.load_state_dict(state_dict, strict=False)
+    # Sanity check that the work we've done matches
+    # Pytorch internal loading.
+    torch_missing = set(torch_missing)
+    torch_unexpected = set(torch_unexpected)
+    for to_remove_group in to_removes.values():
+        for to_remove in to_remove_group:
+            if to_remove not in torch_missing:
+                torch_unexpected.add(to_remove)
+            else:
+                torch_missing.remove(to_remove)
+    assert torch_missing == missing, f"{torch_missing} != {missing}"
+    assert torch_unexpected == unexpected, f"{torch_unexpected} != {unexpected}"
     return missing, unexpected
 
 
@@ -232,16 +337,16 @@ def save_file(
     serialize_file(_flatten(tensors), filename, metadata=metadata)
 
 
-def load_file(filename: Union[str, os.PathLike], device="cpu") -> Dict[str, torch.Tensor]:
+def load_file(filename: Union[str, os.PathLike], device: Union[str, int] = "cpu") -> Dict[str, torch.Tensor]:
     """
     Loads a safetensors file into torch format.
 
     Args:
-        filename (`str`, or `os.PathLike`)):
+        filename (`str`, or `os.PathLike`):
             The name of the file which contains the tensors
-        device (`Dict[str, any]`, *optional*, defaults to `cpu`):
+        device (`Union[str, int]`, *optional*, defaults to `cpu`):
             The device where the tensors need to be located after load.
-            available options are all regular torch device locations
+            available options are all regular torch device locations.
 
     Returns:
         `Dict[str, torch.Tensor]`: dictionary that contains name as key, value as `torch.Tensor`
@@ -257,7 +362,7 @@ def load_file(filename: Union[str, os.PathLike], device="cpu") -> Dict[str, torc
     """
     result = {}
     with safe_open(filename, framework="pt", device=device) as f:
-        for k in f.keys():
+        for k in f.offset_keys():
             result[k] = f.get_tensor(k)
     return result
 
@@ -289,6 +394,12 @@ def load(data: bytes) -> Dict[str, torch.Tensor]:
     return _view2torch(flat)
 
 
+# torch.float8 formats require 2.1; we do not support these dtypes on earlier versions
+_float8_e4m3fn = getattr(torch, "float8_e4m3fn", None)
+_float8_e5m2 = getattr(torch, "float8_e5m2", None)
+_float8_e8m0 = getattr(torch, "float8_e8m0fnu", None)
+_float4_e2m1_x2 = getattr(torch, "float4_e2m1fn_x2", None)
+
 _SIZE = {
     torch.int64: 8,
     torch.float32: 4,
@@ -300,6 +411,10 @@ _SIZE = {
     torch.int8: 1,
     torch.bool: 1,
     torch.float64: 8,
+    _float8_e4m3fn: 1,
+    _float8_e5m2: 1,
+    _float8_e8m0: 1,
+    _float4_e2m1_x2: 1,
 }
 
 _TYPES = {
@@ -316,6 +431,8 @@ _TYPES = {
     "I8": torch.int8,
     "U8": torch.uint8,
     "BOOL": torch.bool,
+    "F8_E4M3": _float8_e4m3fn,
+    "F8_E5M2": _float8_e5m2,
 }
 
 
@@ -327,7 +444,14 @@ def _view2torch(safeview) -> Dict[str, torch.Tensor]:
     result = {}
     for k, v in safeview:
         dtype = _getdtype(v["dtype"])
-        arr = torch.frombuffer(v["data"], dtype=dtype).reshape(v["shape"])
+        if len(v["data"]) == 0:
+            # Workaround because frombuffer doesn't accept zero-size tensors
+            assert any(x == 0 for x in v["shape"])
+            arr = torch.empty(v["shape"], dtype=dtype)
+        else:
+            arr = torch.frombuffer(v["data"], dtype=dtype).reshape(v["shape"])
+        if sys.byteorder == "big":
+            arr = torch.from_numpy(arr.numpy().byteswap(inplace=False))
         result[k] = arr
 
     return result
@@ -368,25 +492,50 @@ def _tobytes(tensor: torch.Tensor, name: str) -> bytes:
         return b""
     newptr = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_ubyte))
     data = np.ctypeslib.as_array(newptr, (total_bytes,))  # no internal copy
-
+    if sys.byteorder == "big":
+        NPDTYPES = {
+            torch.int64: np.int64,
+            torch.float32: np.float32,
+            torch.int32: np.int32,
+            # XXX: This is ok because both have the same width
+            torch.bfloat16: np.float16,
+            torch.float16: np.float16,
+            torch.int16: np.int16,
+            torch.uint8: np.uint8,
+            torch.int8: np.int8,
+            torch.bool: bool,
+            torch.float64: np.float64,
+            # XXX: This is ok because both have the same width and byteswap is a no-op anyway
+            _float8_e4m3fn: np.uint8,
+            _float8_e5m2: np.uint8,
+        }
+        npdtype = NPDTYPES[tensor.dtype]
+        # Not in place as that would potentially modify a live running model
+        data = data.view(npdtype).byteswap(inplace=False)
     return data.tobytes()
 
 
 def _flatten(tensors: Dict[str, torch.Tensor]) -> Dict[str, Dict[str, Any]]:
-    if sys.byteorder == "big":
-        raise ValueError("Big endian is not supported, serialization need to be in little endian")
     if not isinstance(tensors, dict):
         raise ValueError(f"Expected a dict of [str, torch.Tensor] but received {type(tensors)}")
-    ptrs = defaultdict(set)
+
+    invalid_tensors = []
     for k, v in tensors.items():
         if not isinstance(v, torch.Tensor):
             raise ValueError(f"Key `{k}` is invalid, expected torch.Tensor but received {type(v)}")
 
-        if v.layout == torch.strided:
-            ptrs[storage_ptr(v)].add(k)
+        if v.layout != torch.strided:
+            invalid_tensors.append(k)
+    if invalid_tensors:
+        raise ValueError(
+            f"You are trying to save a sparse tensors: `{invalid_tensors}` which this library does not support."
+            " You can make it a dense tensor before saving with `.to_dense()` but be aware this might"
+            " make a much larger file than needed."
+        )
 
+    shared_pointers = _find_shared_tensors(tensors)
     failing = []
-    for ptr, names in ptrs.items():
+    for names in shared_pointers:
         if len(names) > 1:
             failing.append(names)
 

@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - main
+  pull_request:
+
 
 permissions:
   # deployments permission to deploy GitHub pages website
@@ -15,7 +17,7 @@ jobs:
     name: Performance regression check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -23,25 +25,25 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
-          python-version: 3.7
+          python-version: "3.12"
           architecture: "x64"
 
       - name: Install
         working-directory: ./bindings/python
         run: |
-          pip install -U pip
-          pip install .[dev]
+          pip install -U pip uv
+          uv sync --extra dev
 
       - name: Run tests
         working-directory: ./bindings/python
         run: |
           cargo test
-          pytest --benchmark-json output.json benches/
+          uv run pytest --benchmark-json output.json benches/
       # Download previous benchmark result from cache (if exists)
       - name: Download previous benchmark data
-        uses: actions/cache@v1
+        uses: actions/cache@v4
         with:
           path: ./cache
           key: ${{ runner.os }}-benchmark

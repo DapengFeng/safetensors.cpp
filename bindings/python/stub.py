@@ -39,7 +39,11 @@ def member_sort(member):
 def fn_predicate(obj):
     value = inspect.ismethoddescriptor(obj) or inspect.isbuiltin(obj)
     if value:
-        return obj.__doc__ and obj.__text_signature__ and not obj.__name__.startswith("_")
+        return (
+            obj.__doc__
+            and obj.__text_signature__
+            and (not obj.__name__.startswith("_") or obj.__name__ in {"__enter__", "__exit__"})
+        )
     if inspect.isgetsetdescriptor(obj):
         return obj.__doc__ and not obj.__name__.startswith("_")
     return False
@@ -80,11 +84,12 @@ def pyi_file(obj, indent=""):
 
         # Init
         if obj.__text_signature__:
-            body += f"{indent}def __init__{obj.__text_signature__}:\n"
+            signature = obj.__text_signature__.replace("(", "(self, ")
+            body += f"{indent}def __init__{signature}:\n"
             body += f"{indent+INDENT}pass\n"
             body += "\n"
 
-        for (name, fn) in fns:
+        for name, fn in fns:
             body += pyi_file(fn, indent=indent)
 
         if not body:
@@ -130,6 +135,7 @@ def do_black(content, is_pyi):
         experimental_string_processing=False,
     )
     try:
+        content = content.replace("$self", "self")
         return black.format_file_contents(content, fast=True, mode=mode)
     except black.NothingChanged:
         return content
@@ -184,4 +190,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     import safetensors
 
-    write(safetensors.safetensors_rust, "py_src/safetensors/", "safetensors", check=args.check)
+    write(
+        safetensors._safetensors_rust,
+        "py_src/safetensors/",
+        "safetensors",
+        check=args.check,
+    )
