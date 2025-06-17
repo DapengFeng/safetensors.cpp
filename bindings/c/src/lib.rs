@@ -29,8 +29,8 @@ pub enum Status {
 }
 
 #[derive(Debug, Error)]
-#[repr(C)]
-enum CError {
+// #[repr(C)]
+pub enum CError {
     #[error("{0}")]
     NullPointer(String),
 
@@ -74,10 +74,27 @@ impl Into<Status> for CError {
 pub enum Dtype {
     /// Boolan type
     BOOL,
-    /// Unsigned byte
-    U8,
+    /// MXF4 <https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>_
+    F4,
+    /// MXF6 <https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>_
+    #[allow(non_camel_case_types)]
+    F6_E2M3,
+    /// MXF6 <https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>_
+    #[allow(non_camel_case_types)]
+    F6_E3M2,
     /// Signed byte
     I8,
+    /// Unsigned byte
+    U8,
+    /// FP8 <https://arxiv.org/pdf/2209.05433.pdf>_
+    #[allow(non_camel_case_types)]
+    F8_E4M3,
+    /// FP8 <https://arxiv.org/pdf/2209.05433.pdf>_
+    #[allow(non_camel_case_types)]
+    F8_E5M2,
+    /// F8_E8M0 <https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>_
+    #[allow(non_camel_case_types)]
+    F8_E8M0,
     /// Signed integer (16-bit)
     I16,
     /// Unsigned integer (16-bit)
@@ -92,29 +109,35 @@ pub enum Dtype {
     U32,
     /// Floating point (32-bit)
     F32,
-    /// Floating point (64-bit)
-    F64,
     /// Signed integer (64-bit)
     I64,
     /// Unsigned integer (64-bit)
     U64,
+    /// Floating point (64-bit)
+    F64,
 }
 
 impl Dtype {
     fn to_dtype(self) -> RDtype {
         match self {
             Dtype::BOOL => RDtype::BOOL,
-            Dtype::U8 => RDtype::U8,
+            Dtype::F4 => RDtype::F4,
+            Dtype::F6_E2M3 => RDtype::F6_E2M3,
+            Dtype::F6_E3M2 => RDtype::F6_E3M2,
             Dtype::I8 => RDtype::I8,
+            Dtype::U8 => RDtype::U8,
+            Dtype::F8_E5M2 => RDtype::F8_E5M2,
+            Dtype::F8_E4M3 => RDtype::F8_E4M3,
+            Dtype::F8_E8M0 => RDtype::F8_E8M0,
             Dtype::I16 => RDtype::I16,
             Dtype::U16 => RDtype::U16,
-            Dtype::I32 => RDtype::I32,
-            Dtype::U32 => RDtype::U32,
-            Dtype::I64 => RDtype::I64,
-            Dtype::U64 => RDtype::U64,
             Dtype::F16 => RDtype::F16,
             Dtype::BF16 => RDtype::BF16,
+            Dtype::I32 => RDtype::I32,
+            Dtype::U32 => RDtype::U32,
             Dtype::F32 => RDtype::F32,
+            Dtype::I64 => RDtype::I64,
+            Dtype::U64 => RDtype::U64,
             Dtype::F64 => RDtype::F64,
         }
     }
@@ -124,17 +147,23 @@ impl From<RDtype> for Dtype {
     fn from(dtype: RDtype) -> Dtype {
         match dtype {
             RDtype::BOOL => Dtype::BOOL,
-            RDtype::U8 => Dtype::U8,
+            RDtype::F4 => Dtype::F4,
+            RDtype::F6_E2M3 => Dtype::F6_E2M3,
+            RDtype::F6_E3M2 => Dtype::F6_E3M2,
             RDtype::I8 => Dtype::I8,
+            RDtype::U8 => Dtype::U8,
+            RDtype::F8_E4M3 => Dtype::F8_E4M3,
+            RDtype::F8_E5M2 => Dtype::F8_E5M2,
+            RDtype::F8_E8M0 => Dtype::F8_E8M0,
             RDtype::I16 => Dtype::I16,
             RDtype::U16 => Dtype::U16,
-            RDtype::I32 => Dtype::I32,
-            RDtype::U32 => Dtype::U32,
-            RDtype::I64 => Dtype::I64,
-            RDtype::U64 => Dtype::U64,
             RDtype::F16 => Dtype::F16,
             RDtype::BF16 => Dtype::BF16,
+            RDtype::I32 => Dtype::I32,
+            RDtype::U32 => Dtype::U32,
             RDtype::F32 => Dtype::F32,
+            RDtype::I64 => Dtype::I64,
+            RDtype::U64 => Dtype::U64,
             RDtype::F64 => Dtype::F64,
             d => panic!("Unhandled dtype {d:?}"),
         }
@@ -151,9 +180,12 @@ pub struct View {
     dtype: Dtype,
     rank: usize,
     shape: *const usize,
+    data: *const u8,
     start: usize,
     stop: usize,
 }
+
+// impl View
 
 /// Attempt to deserialize the content of `buffer`, reading `buffer_len` bytes as a safentesors
 /// data buffer.
@@ -406,6 +438,7 @@ unsafe fn _get_tensor(
             dtype: st_view.dtype().into(),
             rank: shape.len(),
             shape: shape.as_ptr(),
+            data: data.as_ptr(),
             start,
             stop,
         });
