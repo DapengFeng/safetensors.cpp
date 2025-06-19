@@ -1,8 +1,5 @@
-safetensors/target
-safetensors/**/Cargo.lock
-bindings/python/Cargo.lock
-bindings/c/Cargo.lock
-bindings/c/target
+Cargo.lock
+target/
 build/
 bindings/c/include/
 *.bin

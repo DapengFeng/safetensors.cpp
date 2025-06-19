@@ -1,0 +1,21 @@
+# Cargo.toml
+[package]
+name = "safetensors_cpp"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "safetensors_rust"
+crate-type = ["staticlib"]
+
+[dependencies]
+cxx = "1.0"
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+safetensors = {path = "../../safetensors"}
+
+[build-dependencies]
+cxx-build = "1.0"
+miette = { version = "5", features = ["fancy"] }
+
+[profile.release]
+opt-level = 3
