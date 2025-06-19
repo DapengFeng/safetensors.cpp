@@ -1,13 +1,16 @@
-use safetensors::{Dtype, View, SafeTensorError, tensor::TensorView};
+use safetensors::Dtype as RDtype;
+use safetensors::SafeTensorError as RSafeTensorError;
+use safetensors::tensor::TensorView as RTensorView;
+use safetensors::View;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use crate::ffi::{ CxxDtype, CxxSafeTensorError, CxxTensorView, CxxStrStr, CxxStrUsize, CxxStrTensorView};
+use crate::ffi::{ Dtype, SafeTensorError, TensorView, PairStrStr, PairStrUsize, PairStrTensorView};
 
 #[cxx::bridge(namespace = "safetensors")]
 mod ffi {
     /// The various available dtypes. They MUST be in increasing alignment order
     #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
-    enum CxxDtype {
+    enum Dtype {
         /// Boolan type
         BOOL,
         /// MXF4 <https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf>_
@@ -54,7 +57,7 @@ mod ffi {
     }
 
     #[derive(Debug)]
-    enum CxxSafeTensorError {
+    enum SafeTensorError {
         /// The header is an invalid UTF-8 string and cannot be read.
         InvalidHeader,
         /// The header's first byte is not the expected `{`.
@@ -93,80 +96,51 @@ mod ffi {
 
     
     #[derive(Debug, PartialEq, Eq, Clone)]
-    struct CxxTensorView {
-        shape_: Vec<usize>,
-        dtype_: CxxDtype,
-        data_: Vec<u8>,
+    struct TensorView {
+        shape: Vec<usize>,
+        dtype: Dtype,
+        data: Vec<u8>,
     }
 
-    struct CxxStrStr {
+    struct PairStrStr {
         key: String,
         value: String,
     }
 
-    struct CxxStrUsize {
+    struct PairStrUsize {
         key: String,
         value: usize,
     }
 
-    struct CxxStrTensorView {
+    struct PairStrTensorView {
         key: String,
-        value: CxxTensorView,
+        value: TensorView,
     }
 
     // Rust types and signatures exposed to C++.
     extern "Rust" {
-        /// The shape of the tensor
-        fn shape(self: &CxxTensorView) -> &[usize];
-        /// The `Dtype` of the tensor
-        fn dtype(self: &CxxTensorView) -> CxxDtype;
-        /// The data of the tensor
-        fn data(self: &CxxTensorView) -> &[u8];
-        /// The length of the data, in bytes.
-        /// This is necessary as this might be faster to get than `data().len()`
-        /// for instance for tensors residing in GPU.
-        fn data_len(self: &CxxTensorView) -> usize;
+        fn make_tensor_view(dtype: Dtype, shape: Vec<usize>, data: Vec<u8>) -> TensorView;
 
-        fn make_tensor_view(dtype: CxxDtype, shape: Vec<usize>, data: Vec<u8>) -> CxxTensorView;
-
-        fn serialize(data: Vec<CxxStrTensorView>, data_info: Vec<CxxStrStr>) -> Vec<u8>;
+        fn serialize(data: Vec<PairStrTensorView>, data_info: Vec<PairStrStr>) -> Vec<u8>;
     }
 }
 
-impl CxxTensorView {
-    fn shape(&self) -> &[usize] {
-        &self.shape_
-    }
-
-    fn dtype(&self) -> CxxDtype {
-        return self.dtype_
-    }
-
-    fn data(&self) -> &[u8] {
-        &self.data_
-    }
-
-    fn data_len(&self) -> usize {
-        self.data_.len()
-    }
-}
-
-fn make_tensor_view(dtype: CxxDtype, shape: Vec<usize>, data: Vec<u8>) -> CxxTensorView {
-    TensorView::new(dtype.into(), shape, &data)
-        .map(|tv| tv.into()).expect("Failed to create CxxTensorView")
+fn make_tensor_view(dtype: Dtype, shape: Vec<usize>, data: Vec<u8>) -> TensorView {
+    RTensorView::new(dtype.into(), shape, &data)
+        .map(|tv| tv.into()).expect("Failed to create TensorView")
 }
 
 
 fn prepare(
-    tensor_dict: Vec<CxxStrTensorView>
-) -> Result<HashMap<String, CxxTensorView>, SafeTensorError> {
+    tensor_dict: Vec<PairStrTensorView>
+) -> Result<HashMap<String, TensorView>, RSafeTensorError> {
     let mut tensors = HashMap::with_capacity(tensor_dict.len());
     for tensor in tensor_dict {
         let shape = tensor.value.shape();
-        let dtype: Dtype = tensor.value.dtype().into();
+        let dtype: RDtype = tensor.value.dtype();
         let data = tensor.value.data();
         if data.len() != shape.iter().product::<usize>() * dtype.size() {
-            return Err(SafeTensorError::InvalidTensorView(
+            return Err(RSafeTensorError::InvalidTensorView(
                 dtype,
                 shape.to_vec(),
                 data.len()
@@ -177,7 +151,7 @@ fn prepare(
     Ok(tensors)
 }
 
-fn convert_to_hashmap_string(dict: Vec<CxxStrStr>) -> Result<Option<HashMap<String, String>>, SafeTensorError> {
+fn convert_to_hashmap_string(dict: Vec<PairStrStr>) -> Result<Option<HashMap<String, String>>, RSafeTensorError> {
     let mut hashmap = HashMap::with_capacity(dict.len());
     for item in dict {
         hashmap.insert(item.key, item.value);
@@ -185,7 +159,7 @@ fn convert_to_hashmap_string(dict: Vec<CxxStrStr>) -> Result<Option<HashMap<Stri
     Ok(Some(hashmap))
 }
 
-fn convert_to_hashmap_usize(dict: Vec<CxxStrUsize>) -> Result<HashMap<String, usize>, SafeTensorError> {
+fn convert_to_hashmap_usize(dict: Vec<PairStrUsize>) -> Result<HashMap<String, usize>, RSafeTensorError> {
     let mut hashmap = HashMap::with_capacity(dict.len());
     for item in dict {
         hashmap.insert(item.key, item.value);
@@ -194,8 +168,8 @@ fn convert_to_hashmap_usize(dict: Vec<CxxStrUsize>) -> Result<HashMap<String, us
 }
 
 fn serialize(
-    data: Vec<CxxStrTensorView>,
-    data_info: Vec<CxxStrStr>,
+    data: Vec<PairStrTensorView>,
+    data_info: Vec<PairStrStr>,
 ) -> Vec<u8> {
     let tensors = prepare(data).expect("Failed to prepare tensors for serialization");
     safetensors::tensor::serialize(
@@ -204,108 +178,108 @@ fn serialize(
     ).expect("Failed to serialize tensors")
 }
 
-impl<'a> Into<CxxTensorView> for TensorView<'a> {
-    fn into(self) -> CxxTensorView {
-        CxxTensorView {
-            shape_: self.shape().to_vec(),
-            dtype_: self.dtype().into(),
-            data_: self.data().to_vec(),
+impl<'a> Into<TensorView> for RTensorView<'a> {
+    fn into(self) -> TensorView {
+        TensorView {
+            shape: self.shape().to_vec(),
+            dtype: self.dtype().into(),
+            data: self.data().to_vec(),
         }
     }
 }
 
-impl View for CxxTensorView {
+impl View for TensorView {
     fn data(&self) -> Cow<[u8]> {
-        self.data().into()
+        Cow::Borrowed(&self.data)
     }
 
     fn data_len(&self) -> usize {
-        self.data_len()
+        self.data.len()
     }
 
     fn shape(&self) -> &[usize] {
-        self.shape()
+        &self.shape
     }
 
-    fn dtype(&self) -> Dtype {
-        self.dtype().into()
+    fn dtype(&self) -> RDtype {
+        self.dtype.into()
     }
 }
 
-impl Into<CxxSafeTensorError> for SafeTensorError {
-    fn into(self) -> CxxSafeTensorError {
+impl Into<SafeTensorError> for RSafeTensorError {
+    fn into(self) -> SafeTensorError {
         match self {
-            SafeTensorError::InvalidHeader(_) => CxxSafeTensorError::InvalidHeader,
-            SafeTensorError::InvalidHeaderStart => CxxSafeTensorError::InvalidHeaderStart,
-            SafeTensorError::InvalidHeaderDeserialization(_) => {
-                CxxSafeTensorError::InvalidHeaderDeserialization
+            RSafeTensorError::InvalidHeader(_) => SafeTensorError::InvalidHeader,
+            RSafeTensorError::InvalidHeaderStart => SafeTensorError::InvalidHeaderStart,
+            RSafeTensorError::InvalidHeaderDeserialization(_) => {
+                SafeTensorError::InvalidHeaderDeserialization
             }
-            SafeTensorError::HeaderTooLarge => CxxSafeTensorError::HeaderTooLarge,
-            SafeTensorError::HeaderTooSmall => CxxSafeTensorError::HeaderTooSmall,
-            SafeTensorError::InvalidHeaderLength => CxxSafeTensorError::InvalidHeaderLength,
-            SafeTensorError::TensorNotFound(_) => CxxSafeTensorError::TensorNotFound,
-            SafeTensorError::TensorInvalidInfo => CxxSafeTensorError::TensorInvalidInfo,
-            SafeTensorError::InvalidOffset(_) => CxxSafeTensorError::InvalidOffset,
-            SafeTensorError::IoError(_) => CxxSafeTensorError::IoError,
-            SafeTensorError::JsonError(_) => CxxSafeTensorError::JsonError,
-            SafeTensorError::InvalidTensorView(_, _, _) => CxxSafeTensorError::InvalidTensorView,
-            SafeTensorError::MetadataIncompleteBuffer => CxxSafeTensorError::MetadataIncompleteBuffer,
-            SafeTensorError::ValidationOverflow => CxxSafeTensorError::ValidationOverflow,
-            SafeTensorError::MisalignedSlice => CxxSafeTensorError::MisalignedSlice,
+            RSafeTensorError::HeaderTooLarge => SafeTensorError::HeaderTooLarge,
+            RSafeTensorError::HeaderTooSmall => SafeTensorError::HeaderTooSmall,
+            RSafeTensorError::InvalidHeaderLength => SafeTensorError::InvalidHeaderLength,
+            RSafeTensorError::TensorNotFound(_) => SafeTensorError::TensorNotFound,
+            RSafeTensorError::TensorInvalidInfo => SafeTensorError::TensorInvalidInfo,
+            RSafeTensorError::InvalidOffset(_) => SafeTensorError::InvalidOffset,
+            RSafeTensorError::IoError(_) => SafeTensorError::IoError,
+            RSafeTensorError::JsonError(_) => SafeTensorError::JsonError,
+            RSafeTensorError::InvalidTensorView(_, _, _) => SafeTensorError::InvalidTensorView,
+            RSafeTensorError::MetadataIncompleteBuffer => SafeTensorError::MetadataIncompleteBuffer,
+            RSafeTensorError::ValidationOverflow => SafeTensorError::ValidationOverflow,
+            RSafeTensorError::MisalignedSlice => SafeTensorError::MisalignedSlice,
         }
     }
 }
 
-impl From<CxxDtype> for Dtype {
-    fn from(dtype: CxxDtype) -> Self {
-        match dtype {
-            CxxDtype::BOOL => Dtype::BOOL,
-            CxxDtype::F4 => Dtype::F4,
-            CxxDtype::F6_E2M3 => Dtype::F6_E2M3,
-            CxxDtype::F6_E3M2 => Dtype::F6_E3M2,
-            CxxDtype::U8 => Dtype::U8,
-            CxxDtype::I8 => Dtype::I8,
-            CxxDtype::F8_E5M2 => Dtype::F8_E5M2,
-            CxxDtype::F8_E4M3 => Dtype::F8_E4M3,
-            CxxDtype::F8_E8M0 => Dtype::F8_E8M0,
-            CxxDtype::I16 => Dtype::I16,
-            CxxDtype::U16 => Dtype::U16,
-            CxxDtype::F16 => Dtype::F16,
-            CxxDtype::BF16 => Dtype::BF16,
-            CxxDtype::I32 => Dtype::I32,
-            CxxDtype::U32 => Dtype::U32,
-            CxxDtype::F32 => Dtype::F32,
-            CxxDtype::F64 => Dtype::F64,
-            CxxDtype::I64 => Dtype::I64,
-            CxxDtype::U64 => Dtype::U64,
-            CxxDtype { repr: 19_u8..=u8::MAX } => todo!(),
-        }
-    }
-}
-
-
-impl From<Dtype> for CxxDtype {
+impl From<Dtype> for RDtype {
     fn from(dtype: Dtype) -> Self {
         match dtype {
-            Dtype::BOOL => CxxDtype::BOOL,
-            Dtype::F4 => CxxDtype::F4,
-            Dtype::F6_E2M3 => CxxDtype::F6_E2M3,
-            Dtype::F6_E3M2 => CxxDtype::F6_E3M2,
-            Dtype::U8 => CxxDtype::U8,
-            Dtype::I8 => CxxDtype::I8,
-            Dtype::F8_E5M2 => CxxDtype::F8_E5M2,
-            Dtype::F8_E4M3 => CxxDtype::F8_E4M3,
-            Dtype::F8_E8M0 => CxxDtype::F8_E8M0,
-            Dtype::I16 => CxxDtype::I16,
-            Dtype::U16 => CxxDtype::U16,
-            Dtype::F16 => CxxDtype::F16,
-            Dtype::BF16 => CxxDtype::BF16,
-            Dtype::I32 => CxxDtype::I32,
-            Dtype::U32 => CxxDtype::U32,
-            Dtype::F32 => CxxDtype::F32,
-            Dtype::F64 => CxxDtype::F64,
-            Dtype::I64 => CxxDtype::I64,
-            Dtype::U64 => CxxDtype::U64,
+            Dtype::BOOL => RDtype::BOOL,
+            Dtype::F4 => RDtype::F4,
+            Dtype::F6_E2M3 => RDtype::F6_E2M3,
+            Dtype::F6_E3M2 => RDtype::F6_E3M2,
+            Dtype::U8 => RDtype::U8,
+            Dtype::I8 => RDtype::I8,
+            Dtype::F8_E5M2 => RDtype::F8_E5M2,
+            Dtype::F8_E4M3 => RDtype::F8_E4M3,
+            Dtype::F8_E8M0 => RDtype::F8_E8M0,
+            Dtype::I16 => RDtype::I16,
+            Dtype::U16 => RDtype::U16,
+            Dtype::F16 => RDtype::F16,
+            Dtype::BF16 => RDtype::BF16,
+            Dtype::I32 => RDtype::I32,
+            Dtype::U32 => RDtype::U32,
+            Dtype::F32 => RDtype::F32,
+            Dtype::F64 => RDtype::F64,
+            Dtype::I64 => RDtype::I64,
+            Dtype::U64 => RDtype::U64,
+            _ => todo!(),
+        }
+    }
+}
+
+
+impl From<RDtype> for Dtype {
+    fn from(dtype: RDtype) -> Self {
+        match dtype {
+            RDtype::BOOL => Dtype::BOOL,
+            RDtype::F4 => Dtype::F4,
+            RDtype::F6_E2M3 => Dtype::F6_E2M3,
+            RDtype::F6_E3M2 => Dtype::F6_E3M2,
+            RDtype::U8 => Dtype::U8,
+            RDtype::I8 => Dtype::I8,
+            RDtype::F8_E5M2 => Dtype::F8_E5M2,
+            RDtype::F8_E4M3 => Dtype::F8_E4M3,
+            RDtype::F8_E8M0 => Dtype::F8_E8M0,
+            RDtype::I16 => Dtype::I16,
+            RDtype::U16 => Dtype::U16,
+            RDtype::F16 => Dtype::F16,
+            RDtype::BF16 => Dtype::BF16,
+            RDtype::I32 => Dtype::I32,
+            RDtype::U32 => Dtype::U32,
+            RDtype::F32 => Dtype::F32,
+            RDtype::F64 => Dtype::F64,
+            RDtype::I64 => Dtype::I64,
+            RDtype::U64 => Dtype::U64,
             _ => todo!(),
         }
     }
