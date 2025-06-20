@@ -97,10 +97,10 @@ mod ffi {
 
     
     #[derive(Debug, PartialEq, Eq, Clone)]
-    struct TensorView {
+    struct TensorView <'a> {
         shape: Vec<usize>,
         dtype: Dtype,
-        data: Vec<u8>,
+        data: &'a [u8],
     }
 
     struct PairStrStr {
@@ -113,21 +113,21 @@ mod ffi {
         value: usize,
     }
 
-    struct PairStrTensorView {
+    struct PairStrTensorView<'a> {
         key: String,
-        value: TensorView,
+        value: TensorView<'a>,
     }
 
     // Rust types and signatures exposed to C++.
     extern "Rust" {
-        fn make_tensor_view(dtype: Dtype, shape: Vec<usize>, data: Vec<u8>) -> TensorView;
+        fn make_tensor_view(dtype: Dtype, shape: Vec<usize>, data: &'static [u8]) -> TensorView<'static>;
 
         fn serialize(data: Vec<PairStrTensorView>, data_info: Vec<PairStrStr>) -> Vec<u8>;
     }
 }
 
-fn make_tensor_view(dtype: Dtype, shape: Vec<usize>, data: Vec<u8>) -> TensorView {
-    RTensorView::new(dtype.into(), shape, &data)
+fn make_tensor_view(dtype: Dtype, shape: Vec<usize>, data: &'static [u8]) -> TensorView<'static> {
+    RTensorView::new(dtype.into(), shape, data)
         .map(|tv| tv.into()).expect("Failed to create TensorView")
 }
 
@@ -179,13 +179,13 @@ fn serialize(
     ).expect("Failed to serialize tensors")
 }
 
-impl View for TensorView {
+impl View for TensorView<'_> {
     fn data(&self) -> Cow<[u8]> {
         Cow::Borrowed(&self.data)
     }
 
     fn data_len(&self) -> usize {
-        self.data.len()
+        self.data().len()
     }
 
     fn shape(&self) -> &[usize] {

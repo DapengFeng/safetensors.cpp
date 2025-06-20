@@ -5,12 +5,12 @@ use safetensors::tensor::TensorView as RTensorView;
 use crate::ffi::{ Dtype, SafeTensorError, TensorView};
 
 // Upload: Rust -> Cxx
-impl<'a> Into<TensorView> for RTensorView<'a> {
-    fn into(self) -> TensorView {
+impl<'a> Into<TensorView<'a>> for RTensorView<'a> {
+    fn into(self) -> TensorView<'a> {
         TensorView {
             shape: self.shape().to_vec(),
             dtype: self.dtype().into(),
-            data: self.data().to_vec(),
+            data: self.data(),
         }
     }
 }
