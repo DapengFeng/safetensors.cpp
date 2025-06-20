@@ -1,44 +1,9 @@
 use safetensors::Dtype as RDtype;
-use safetensors::SafeTensorError as RSafeTensorError;
 use safetensors::tensor::TensorView as RTensorView;
 
-use crate::ffi::{ Dtype, SafeTensorError, TensorView};
+use crate::ffi::{ Dtype, TensorView};
 
 // Upload: Rust -> Cxx
-impl<'a> Into<TensorView<'a>> for RTensorView<'a> {
-    fn into(self) -> TensorView<'a> {
-        TensorView {
-            shape: self.shape().to_vec(),
-            dtype: self.dtype().into(),
-            data: self.data(),
-        }
-    }
-}
-
-impl Into<SafeTensorError> for RSafeTensorError {
-    fn into(self) -> SafeTensorError {
-        match self {
-            RSafeTensorError::InvalidHeader(_) => SafeTensorError::InvalidHeader,
-            RSafeTensorError::InvalidHeaderStart => SafeTensorError::InvalidHeaderStart,
-            RSafeTensorError::InvalidHeaderDeserialization(_) => {
-                SafeTensorError::InvalidHeaderDeserialization
-            }
-            RSafeTensorError::HeaderTooLarge => SafeTensorError::HeaderTooLarge,
-            RSafeTensorError::HeaderTooSmall => SafeTensorError::HeaderTooSmall,
-            RSafeTensorError::InvalidHeaderLength => SafeTensorError::InvalidHeaderLength,
-            RSafeTensorError::TensorNotFound(_) => SafeTensorError::TensorNotFound,
-            RSafeTensorError::TensorInvalidInfo => SafeTensorError::TensorInvalidInfo,
-            RSafeTensorError::InvalidOffset(_) => SafeTensorError::InvalidOffset,
-            RSafeTensorError::IoError(_) => SafeTensorError::IoError,
-            RSafeTensorError::JsonError(_) => SafeTensorError::JsonError,
-            RSafeTensorError::InvalidTensorView(_, _, _) => SafeTensorError::InvalidTensorView,
-            RSafeTensorError::MetadataIncompleteBuffer => SafeTensorError::MetadataIncompleteBuffer,
-            RSafeTensorError::ValidationOverflow => SafeTensorError::ValidationOverflow,
-            RSafeTensorError::MisalignedSlice => SafeTensorError::MisalignedSlice,
-        }
-    }
-}
-
 impl Into<Dtype> for RDtype {
     fn into(self) -> Dtype {
         match self {
@@ -62,6 +27,16 @@ impl Into<Dtype> for RDtype {
             RDtype::I64 => Dtype::I64,
             RDtype::U64 => Dtype::U64,
             _ => todo!(),
+        }
+    }
+}
+
+impl<'a> Into<TensorView<'a>> for RTensorView<'a> {
+    fn into(self) -> TensorView<'a> {
+        TensorView {
+            shape: self.shape().to_vec(),
+            dtype: self.dtype().into(),
+            data: self.data(),
         }
     }
 }
