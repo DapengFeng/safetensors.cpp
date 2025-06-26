@@ -1,6 +1,7 @@
 Cargo.lock
 target/
 build/
+install/
 bindings/c/include/
 *.bin
 *.h5

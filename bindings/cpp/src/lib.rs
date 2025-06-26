@@ -1,8 +1,8 @@
+use crate::ffi::{PairStrStr, PairStrTensorView, TensorView};
 use safetensors::Dtype as RDtype;
-use safetensors::{View, SafeTensorError, SafeTensors};
+use safetensors::{SafeTensorError, SafeTensors, View};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use crate::ffi::{ TensorView, PairStrStr, PairStrTensorView};
 mod conversion;
 
 #[cxx::bridge(namespace = "safetensors")]
@@ -54,12 +54,13 @@ mod ffi {
         /// Unsigned integer (64-bit)
         U64,
     }
-    
+
     #[derive(Debug, PartialEq, Eq, Clone)]
-    struct TensorView <'a> {
+    struct TensorView<'a> {
         shape: Vec<usize>,
         dtype: Dtype,
         data: &'a [u8],
+        data_len: usize,
     }
 
     #[derive(Debug, Clone)]
@@ -78,11 +79,15 @@ mod ffi {
         // TODO(dp): implement with HashMap
         fn serialize(data: Vec<PairStrTensorView>, data_info: Vec<PairStrStr>) -> Result<Vec<u8>>;
 
-        fn serialize_to_file(data: Vec<PairStrTensorView>, data_info: Vec<PairStrStr>, path: &str) -> Result<()>;
+        fn serialize_to_file(
+            data: Vec<PairStrTensorView>,
+            data_info: Vec<PairStrStr>,
+            path: &str,
+        ) -> Result<()>;
 
         fn deserialize(bytes: &[u8]) -> Result<Vec<PairStrTensorView>>;
 
-        // TODO(dp): safe_open
+        fn metadata(bytes: &[u8]) -> Result<Vec<PairStrStr>>;
     }
 }
 
@@ -91,23 +96,20 @@ fn serialize(
     data_info: Vec<PairStrStr>,
 ) -> Result<Vec<u8>, SafeTensorError> {
     let tensors = prepare(data)?;
-    let out = safetensors::tensor::serialize(
-        tensors,
-        convert_to_hashmap_string(data_info),
-    )?;
+    let out = safetensors::tensor::serialize(tensors, convert_to_hashmap_string(data_info))?;
     Ok(out)
 }
 
 fn serialize_to_file(
     data: Vec<PairStrTensorView>,
     data_info: Vec<PairStrStr>,
-    path: &str
+    path: &str,
 ) -> Result<(), SafeTensorError> {
     let tensors = prepare(data)?;
     safetensors::tensor::serialize_to_file(
         tensors,
         convert_to_hashmap_string(data_info),
-        path.as_ref()
+        path.as_ref(),
     )?;
     Ok(())
 }
@@ -121,20 +123,28 @@ fn deserialize(bytes: &[u8]) -> Result<Vec<PairStrTensorView>, SafeTensorError> 
         let shape = tensor.shape().to_vec();
         let dtype = tensor.dtype();
         let data = tensor.data();
-        if data.len() != shape.iter().product::<usize>() * dtype.size() {
-            return Err(SafeTensorError::InvalidTensorView(
-                dtype,
-                shape,
-                data.len()
-            ));
-        }
+        let data_len = tensor.data_len();
         items.push(PairStrTensorView {
             key: tensor_name,
             value: TensorView {
                 shape,
                 dtype: dtype.into(),
                 data,
+                data_len,
             },
+        });
+    }
+    Ok(items)
+}
+
+fn metadata(bytes: &[u8]) -> Result<Vec<PairStrStr>, SafeTensorError> {
+    let (_n, metadata) = SafeTensors::read_metadata(bytes)?;
+    let Some(metadata) = &metadata.metadata() else { todo!() };
+    let mut items = Vec::with_capacity(metadata.len());
+    for (key, value) in metadata {
+        items.push(PairStrStr {
+            key: key.to_string(),
+            value: value.to_string(),
         });
     }
     Ok(items)
@@ -147,7 +157,7 @@ impl View for TensorView<'_> {
     }
 
     fn data_len(&self) -> usize {
-        self.data().len()
+        self.data_len
     }
 
     fn shape(&self) -> &[usize] {
@@ -160,20 +170,18 @@ impl View for TensorView<'_> {
 }
 
 fn prepare(
-    tensor_dict: Vec<PairStrTensorView>
+    tensor_dict: Vec<PairStrTensorView>,
 ) -> Result<HashMap<String, TensorView>, SafeTensorError> {
     let mut tensors = HashMap::with_capacity(tensor_dict.len());
     for tensor in tensor_dict {
-        let shape = tensor.value.shape();
+        let mut shape: Vec<usize> = tensor.value.shape().to_vec();
         let dtype: RDtype = tensor.value.dtype();
-        let data = tensor.value.data();
-        if data.len() != shape.iter().product::<usize>() * dtype.size() {
-            return Err(SafeTensorError::InvalidTensorView(
-                dtype,
-                shape.to_vec(),
-                data.len()
-            ));
-        }
+
+        if dtype == RDtype::F4 {
+            let n = shape.len();
+            shape[n - 1] *= 2;
+        };
+
         tensors.insert(tensor.key, tensor.value);
     }
     Ok(tensors)
@@ -183,6 +191,10 @@ fn convert_to_hashmap_string(dict: Vec<PairStrStr>) -> Option<HashMap<String, St
     if dict.is_empty() {
         None
     } else {
-        Some(dict.into_iter().map(|item| (item.key, item.value)).collect())
+        Some(
+            dict.into_iter()
+                .map(|item| (item.key, item.value))
+                .collect(),
+        )
     }
 }

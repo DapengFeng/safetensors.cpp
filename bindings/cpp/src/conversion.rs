@@ -1,7 +1,8 @@
-use safetensors::Dtype as RDtype;
 use safetensors::tensor::TensorView as RTensorView;
+use safetensors::Dtype as RDtype;
+use safetensors::View;
 
-use crate::ffi::{ Dtype, TensorView};
+use crate::ffi::{Dtype, TensorView};
 
 // Upload: Rust -> Cxx
 impl Into<Dtype> for RDtype {
@@ -37,6 +38,7 @@ impl<'a> Into<TensorView<'a>> for RTensorView<'a> {
             shape: self.shape().to_vec(),
             dtype: self.dtype().into(),
             data: self.data(),
+            data_len: self.data_len(),
         }
     }
 }
