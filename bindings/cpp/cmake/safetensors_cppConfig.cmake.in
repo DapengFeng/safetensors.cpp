@@ -1,0 +1,16 @@
+@PACKAGE_INIT@
+
+# Find dependencies
+find_dependency(nlohmann_json REQUIRED)
+find_dependency(fmt REQUIRED)
+
+# Include targets
+include(${CMAKE_CURRENT_LIST_DIR}/@SAFETENSORS_PROJECT_NAME@TargetsCorrosion.cmake)
+include("${CMAKE_CURRENT_LIST_DIR}/@SAFETENSORS_PROJECT_NAME@Targets.cmake")
+
+# Set target alias for backwards compatibility
+if(TARGET @SAFETENSORS_PROJECT_NAME@::@SAFETENSORS_PROJECT_NAME@ AND NOT TARGET safetensors_cpp::safetensors_cpp)
+    add_library(safetensors_cpp::safetensors_cpp ALIAS @SAFETENSORS_PROJECT_NAME@::@SAFETENSORS_PROJECT_NAME@)
+endif()
+
+check_required_components(@SAFETENSORS_PROJECT_NAME@)

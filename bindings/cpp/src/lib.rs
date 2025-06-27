@@ -61,6 +61,7 @@ mod ffi {
         dtype: Dtype,
         data: &'a [u8],
         data_len: usize,
+        data_offsets: Vec<usize>,
     }
 
     #[derive(Debug, Clone)]
@@ -119,9 +120,14 @@ fn deserialize(bytes: &[u8]) -> Result<Vec<PairStrTensorView>, SafeTensorError> 
     let tensors = safetensor.tensors();
 
     let mut items = Vec::with_capacity(tensors.len());
+    let mut offsets = 0;
     for (tensor_name, tensor) in tensors {
-        let shape = tensor.shape().to_vec();
+        let mut shape = tensor.shape().to_vec();
         let dtype = tensor.dtype();
+        if dtype == RDtype::F4 {
+            let n = shape.len();
+            shape[n - 1] /= 2; // F4 is stored as F8
+        }
         let data = tensor.data();
         let data_len = tensor.data_len();
         items.push(PairStrTensorView {
@@ -131,15 +137,19 @@ fn deserialize(bytes: &[u8]) -> Result<Vec<PairStrTensorView>, SafeTensorError> 
                 dtype: dtype.into(),
                 data,
                 data_len,
+                data_offsets: vec![offsets, offsets + data_len],
             },
         });
+        offsets += data_len;
     }
     Ok(items)
 }
 
 fn metadata(bytes: &[u8]) -> Result<Vec<PairStrStr>, SafeTensorError> {
     let (_n, metadata) = SafeTensors::read_metadata(bytes)?;
-    let Some(metadata) = &metadata.metadata() else { todo!() };
+    let Some(metadata) = &metadata.metadata() else {
+        return Ok(Vec::new());
+    };
     let mut items = Vec::with_capacity(metadata.len());
     for (key, value) in metadata {
         items.push(PairStrStr {
