@@ -120,44 +120,6 @@ We've benchmarked the C++ bindings against the Python implementation across diff
 3. **Choose CPU for pure speed**: Use CUDA only when GPU tensors are required
 4. **Consistent C++ advantage**: Superior performance regardless of device or iterations
 
-#### Device-Specific Recommendations
-
-**For Maximum Speed (Inference/Loading):**
-```bash
-# Use C++ CPU for ultimate performance
-./build/bindings/cpp/benchmark/bench_cpp model.safetensors 1
-
-# Python CPU comparison
-python bindings/cpp/benchmark/bench.py model.safetensors 1 --device cpu
-```
-
-**For GPU Workflows (Training/GPU Processing):**
-```bash
-# Use C++ CUDA when tensors need to be on GPU
-./build/bindings/cpp/benchmark/bench_cpp model.safetensors 1 cuda
-
-# Python CUDA comparison  
-python bindings/cpp/benchmark/bench.py model.safetensors 1 --device cuda
-```
-
-**For any production use case, C++ bindings provide dramatic performance benefits:**
-
-```bash
-# Build optimized C++ bindings
-cd bindings/cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-
-# Single model load (production inference)
-./build/benchmark/bench_cpp model.safetensors 1
-
-# Repeated access (development/testing)  
-./build/benchmark/bench_cpp model.safetensors 100
-
-# Compare with Python
-python benchmark/bench.py model.safetensors 1
-```
-
 **Performance Testing:**
 ```bash
 # Comprehensive benchmark comparison
