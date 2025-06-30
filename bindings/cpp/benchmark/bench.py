@@ -12,11 +12,11 @@ if __name__ == "__main__":
 
     start_time = datetime.datetime.now()
     
-    for i in range(args.loop):
-        with safe_open(args.path, framework="pt") as f:
-          results = {}
-          for key in f.keys():
-              results[key] = f.get_tensor(key)
+    with safe_open(args.path, framework="pt") as f:
+        for i in range(args.loop):
+            results = {}
+            for key in f.keys():
+                results[key] = f.get_tensor(key)
 
     end_time = datetime.datetime.now()
     duration = (end_time - start_time) / args.loop
