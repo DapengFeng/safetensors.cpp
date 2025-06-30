@@ -76,13 +76,17 @@ message(STATUS "Torch include dirs: ${TORCH_INCLUDE_DIRS}")
 add_executable(bench_cpp bench.cpp)
 target_link_libraries(bench_cpp PRIVATE safetensors_cpp ${TORCH_LIBRARIES})
 
+# Add optimized benchmark
+add_executable(bench_optimized bench_optimized.cpp)
+target_link_libraries(bench_optimized PRIVATE safetensors_cpp ${TORCH_LIBRARIES})
+
 add_custom_target(
     bench_py
     ALL
     COMMAND
         ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/bench.py
-        ${CMAKE_BINARY_DIR}/bindings/cpp/benchmark/bench.py
+        ${CMAKE_CURRENT_BINARY_DIR}/bench.py
     COMMENT "Copying benchmark files to build directory"
 )
 

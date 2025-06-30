@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
 
 #include "fmt/format.h"
-#include "nlohmann/json.hpp"
 #include "rust/cxx.h"
 #include "safetensors/mmap.hpp"
 #include "safetensors_abi/lib.h"
@@ -29,7 +29,6 @@ class SafeOpen {
     Dtype dtype;
     const void* data_ptr = nullptr;
     std::size_t data_len = 0;
-    std::pair<std::size_t, std::size_t> data_offsets;
   };
 
   explicit SafeOpen(const std::string& filename)
@@ -47,12 +46,16 @@ class SafeOpen {
     tensor_views_ = deserialize(buffer_);
     metadata_ = metadata(buffer_);
 
+    metadata_map_.reserve(metadata_.size());
     for (const auto& pair : metadata_) {
       std::string key(pair.key.data(), pair.key.size());
       std::string value(pair.value.data(), pair.value.size());
-      metadata_map_[key] = value;
+      metadata_map_[std::move(key)] = std::move(value);
     }
 
+    std::vector<std::pair<std::string, TensorView>> tensor_views_vector;
+
+    tensor_views_vector.reserve(tensor_views_.size());
     for (const auto& pair : tensor_views_) {
       std::vector<std::size_t> shape(
           pair.value.shape.begin(),
@@ -61,26 +64,26 @@ class SafeOpen {
       const void* data_ptr = pair.value.data.data();
       std::size_t data_len = pair.value.data_len;
       std::string key(pair.key.data(), pair.key.size());
-      std::pair<std::size_t, std::size_t> data_offsets(
-          pair.value.data_offsets[0], pair.value.data_offsets[1]);
-      // TODO(dp): check the access order
-      tensor_views_map_[key] =
-          TensorView{std::move(shape), dtype, data_ptr, data_len,
-                     std::move(data_offsets)};
-      // tensor_views_vector_.emplace_back(
-      //     std::make_pair(key, TensorView{std::move(shape), dtype, data_ptr,
-      //                                    data_len, std::move(data_offsets)}));
+      // TODO(dp): check the access order 
+      tensor_views_vector.emplace_back(
+          std::make_pair(std::move(key), TensorView{std::move(shape), dtype, data_ptr,
+                                         data_len}));
+      // tensor_views_map_[key] =
+      //     TensorView{std::move(shape), dtype, data_ptr, data_len,
+      //                std::move(data_offsets)};
+      // keys_.emplace_back(std::move(key));
     }
 
-    // std::sort(tensor_views_vector_.begin(), tensor_views_vector_.end(),
-    //           [](const auto& a, const auto& b) {
-    //             return a.second.data_ptr <
-    //                    b.second.data_ptr;
-    //           });
+    std::sort(tensor_views_vector.begin(), tensor_views_vector.end(),
+              [](const auto& a, const auto& b) {
+                return a.second.data_ptr < b.second.data_ptr;
+              });
 
-    // for (const auto& pair : tensor_views_vector_) {
-    //   tensor_views_map_[pair.first] = pair.second;
-    // }
+    for (const auto& pair : tensor_views_vector) {
+      // Store the tensor view in the map and keys vector
+      tensor_views_map_[pair.first] = pair.second;
+      keys_.emplace_back(pair.first);
+    }
   }
 
   SafeOpen(const SafeOpen&) = delete;
@@ -91,23 +94,18 @@ class SafeOpen {
 
   ~SafeOpen() = default;
 
-  std::vector<std::string> keys() const {
-    std::vector<std::string> keys;
-    for (const auto& pair : tensor_views_map_) {
-      std::string key(pair.first.data(), pair.first.size());
-      keys.emplace_back(std::move(key));
-    }
-    return keys;
+  inline std::vector<std::string> keys() const noexcept{
+    return keys_;
   }
 
-  TensorView get_tensor(const std::string& key) const {
+  TensorView get_tensor(const std::string& key) {
     if (tensor_views_map_.find(key) == tensor_views_map_.end())
       throw std::runtime_error(fmt::format("{}:{} key '{}' not found", __FILE__,
                                            __LINE__, std::string(key)));
     return tensor_views_map_[key];
   }
 
-  nlohmann::ordered_map<std::string, std::string> get_metadata() const {
+  inline std::unordered_map<std::string, std::string> get_metadata() const noexcept {
     return metadata_map_;
   }
 
@@ -117,9 +115,9 @@ class SafeOpen {
   rust::Slice<std::uint8_t const> buffer_;
   rust::Vec<PairStrTensorView> tensor_views_;
   rust::Vec<PairStrStr> metadata_;
-  // std::vector<std::pair<std::string, TensorView>> tensor_views_vector_;
-  nlohmann::ordered_map<std::string, TensorView> tensor_views_map_;
-  nlohmann::ordered_map<std::string, std::string> metadata_map_;
+  std::vector<std::string> keys_;
+  std::unordered_map<std::string, TensorView> tensor_views_map_;
+  std::unordered_map<std::string, std::string> metadata_map_;
 };
 
 }  // namespace safetensors

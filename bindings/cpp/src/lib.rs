@@ -61,7 +61,6 @@ mod ffi {
         dtype: Dtype,
         data: &'a [u8],
         data_len: usize,
-        data_offsets: Vec<usize>,
     }
 
     #[derive(Debug, Clone)]
@@ -120,7 +119,6 @@ fn deserialize(bytes: &[u8]) -> Result<Vec<PairStrTensorView>, SafeTensorError> 
     let tensors = safetensor.tensors();
 
     let mut items = Vec::with_capacity(tensors.len());
-    let mut offsets = 0;
     for (tensor_name, tensor) in tensors {
         let mut shape = tensor.shape().to_vec();
         let dtype = tensor.dtype();
@@ -137,10 +135,8 @@ fn deserialize(bytes: &[u8]) -> Result<Vec<PairStrTensorView>, SafeTensorError> 
                 dtype: dtype.into(),
                 data,
                 data_len,
-                data_offsets: vec![offsets, offsets + data_len],
             },
         });
-        offsets += data_len;
     }
     Ok(items)
 }

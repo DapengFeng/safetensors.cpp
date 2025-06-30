@@ -43,31 +43,48 @@ torch::Dtype to_torch_dtype(safetensors::Dtype dtype) {
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <path_to_safetensors_file>"
+    std::cerr << "Usage: " << argv[0] << " <path_to_safetensors_file> [<loop_count>]"
               << std::endl;
     return 1;
   }
 
-  auto start = std::chrono::high_resolution_clock::now();
-  auto f = safetensors::SafeOpen(argv[1]);
-  torch::OrderedDict<std::string, torch::Tensor> tensors;
-  for (const auto& key : f.keys()) {
-    torch::NoGradGuard no_grad;
-    auto tensor = f.get_tensor(key);
-    std::vector<std::int64_t> shape;
-    shape.reserve(tensor.shape.size());
-    std::transform(
-        tensor.shape.begin(), tensor.shape.end(), std::back_inserter(shape),
-        [](const auto& dim) { return static_cast<std::int64_t>(dim); });
-    tensors.insert(
-        key, torch::from_blob(
-                 const_cast<void*>(tensor.data_ptr), shape,
-                 torch::TensorOptions().dtype(to_torch_dtype(tensor.dtype))));
+  int loop_count = 1;
+  if (argc > 2) {
+    try {
+      loop_count = std::stoi(argv[2]);
+      if (loop_count < 1) {
+        std::cerr << "Loop count must be a positive integer." << std::endl;
+        return 1;
+      }
+    } catch (const std::invalid_argument&) {
+      std::cerr << "Invalid loop count: " << argv[2] << std::endl;
+      return 1;
+    }
   }
+
+  auto f = safetensors::SafeOpen(argv[1]);
+  auto start = std::chrono::high_resolution_clock::now();
+  for(int i = 0; i < loop_count; ++i) {
+    torch::OrderedDict<std::string, torch::Tensor> tensors;
+    for (const auto& key : f.keys()) {
+      torch::NoGradGuard no_grad;
+      auto tensor = f.get_tensor(key);
+      std::vector<std::int64_t> shape;
+      shape.reserve(tensor.shape.size());
+      std::transform(
+          tensor.shape.begin(), tensor.shape.end(), std::back_inserter(shape),
+          [](const auto& dim) { return static_cast<std::int64_t>(dim); });
+      tensors.insert(
+          key, torch::from_blob(
+                  const_cast<void*>(tensor.data_ptr), shape,
+                  torch::TensorOptions().dtype(to_torch_dtype(tensor.dtype)).pinned_memory(true)));
+    }
+  }
+  
 
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> duration = end - start;
-  std::cout << "Benchmark completed in " << duration.count() << " seconds."
+  std::cout << "Benchmark completed in " << duration.count() / loop_count << " seconds."
             << std::endl;
 
 

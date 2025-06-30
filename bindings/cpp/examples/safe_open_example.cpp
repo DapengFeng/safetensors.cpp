@@ -12,6 +12,7 @@
 
 #include <iomanip>
 #include <iostream>
+#include <numeric>
 
 #include "safetensors/safetensors.hpp"
 

@@ -49,13 +49,13 @@ if(ENABLE_LIO)
     endif()
 endif()
 
-find_package(nlohmann_json REQUIRED)
+# find_package(nlohmann_json REQUIRED)
 find_package(fmt REQUIRED)
 
 add_library(${PROJECT_NAME} src/mmap.cpp)
 target_link_libraries(
     ${PROJECT_NAME}
-    PUBLIC safetensors_abi nlohmann_json::nlohmann_json fmt::fmt
+    PUBLIC safetensors_abi fmt::fmt
 )
 target_include_directories(
     ${PROJECT_NAME}

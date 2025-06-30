@@ -1,7 +1,6 @@
 @PACKAGE_INIT@
 
 # Find dependencies
-find_dependency(nlohmann_json REQUIRED)
 find_dependency(fmt REQUIRED)
 
 # Include targets
