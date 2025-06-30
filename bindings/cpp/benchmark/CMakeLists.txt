@@ -51,17 +51,16 @@ endfunction()
 
 find_package(CUDAToolkit REQUIRED)
 
-message(STATUS "PyTorch NVTX headers workaround: Yes")
-# only do this if nvToolsExt is not defined and CUDA::nvtx3 exists
-if(NOT TARGET CUDA::nvToolsExt AND TARGET CUDA::nvtx3)
-    add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
-    # ensure that PyTorch is told to use NVTX3 headers
-    target_compile_definitions(CUDA::nvToolsExt INTERFACE TORCH_CUDA_USE_NVTX3)
-    target_link_libraries(CUDA::nvToolsExt INTERFACE CUDA::nvtx3)
-endif()
-
 find_package(Torch QUIET)
 if(NOT Torch_FOUND)
+    message(STATUS "PyTorch NVTX headers workaround: Yes")
+    # only do this if nvToolsExt is not defined and CUDA::nvtx3 exists
+    if(NOT TARGET CUDA::nvToolsExt AND TARGET CUDA::nvtx3)
+        add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+        # ensure that PyTorch is told to use NVTX3 headers
+        target_compile_definitions(CUDA::nvToolsExt INTERFACE TORCH_CUDA_USE_NVTX3)
+        target_link_libraries(CUDA::nvToolsExt INTERFACE CUDA::nvtx3)
+    endif()
     message(STATUS "Find Torch from python environment")
     find_pytorch_from_python()
     find_package(Torch CONFIG)

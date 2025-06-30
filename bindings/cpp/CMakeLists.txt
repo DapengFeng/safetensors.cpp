@@ -49,7 +49,6 @@ if(ENABLE_LIO)
     endif()
 endif()
 
-# find_package(nlohmann_json REQUIRED)
 find_package(fmt REQUIRED)
 
 add_library(${PROJECT_NAME} src/mmap.cpp)
