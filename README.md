@@ -70,43 +70,75 @@ std::cout << "]" << std::endl;
 
 ### Performance Benchmarks
 
-We've benchmarked the C++ bindings against the Python implementation across different model sizes and access patterns. The benchmarks measure the time per iteration to load all tensors from the file:
+We've benchmarked the C++ bindings against the Python implementation across different model sizes, access patterns, and devices (CPU vs CUDA). All benchmarks measure the time per iteration to load all tensors from the file:
 
-#### Single Load Performance (Real-world Scenario)
-| Model Size | Python | C++ | Speedup | Use Case |
-|------------|--------|-----|---------|----------|
-| 523MB (gpt2.safetensors)     | 0.691s | 0.0004s | **1,851x faster** | Model loading |
-| 4.7GB (vggt-1B.safetensors)     | 0.749s | 0.0037s | **204x faster** | Large model loading |
+#### CPU Performance (Single Load - Real-world Scenario)
+| Model Size | Python CPU | C++ CPU | Speedup | Use Case |
+|------------|------------|---------|---------|----------|
+| 523MB (gpt2.safetensors)     | 0.691s     | 0.0004s | **1,851x faster** | Model loading |
+| 4.7GB (vggt-1B.safetensors)     | 0.749s     | 0.0037s | **204x faster** | Large model loading |
+
+#### CUDA Performance (Single Load - GPU Acceleration)
+| Model Size | Python CUDA | C++ CUDA | Speedup | GPU Memory Transfer |
+|------------|-------------|----------|---------|-------------------|
+| 523MB (gpt2.safetensors)     | 1.036s      | 0.240s   | **4.3x faster** | CPU→GPU transfer |
+| 4.7GB (vggt-1B.safetensors)     | 1.664s      | 0.570s   | **2.9x faster** | CPU→GPU transfer |
 
 #### Repeated Access Performance (Loop Benchmarks)
-| Iterations | Model Size | Python (per iter) | C++ (per iter) | Winner | Speedup |
-|------------|------------|-------------------|----------------|--------|---------|
-| 1          | 523MB      | 0.691s           | 0.0004s        | **C++** | 1,851x |
-| 10         | 523MB      | 0.070s           | 0.0003s        | **C++** | 215x |
-| 100        | 523MB      | 0.009s           | 0.0003s        | **C++** | 26x |
-| 1          | 4.7GB      | 0.749s           | 0.0037s        | **C++** | 204x |
-| 10         | 4.7GB      | 0.092s           | 0.0036s        | **C++** | 26x |
-| 100        | 4.7GB      | 0.026s           | 0.0036s        | **C++** | 7x |
+
+**523MB Model (gpt2.safetensors):**
+| Iterations | Python CPU | C++ CPU | Python CUDA | C++ CUDA |
+|------------|------------|---------|-------------|----------|
+| 1          | 0.691s     | 0.0004s | 1.036s      | 0.240s   |
+| 10         | 0.070s     | 0.0003s | 0.145s      | 0.060s   |
+| 100        | 0.009s     | 0.0003s | 0.054s      | 0.041s   |
+
+**4.7GB Model (vggt-1B.safetensors):**
+| Iterations | Python CPU | C++ CPU | Python CUDA | C++ CUDA |
+|------------|------------|---------|-------------|----------|
+| 1          | 0.749s     | 0.0037s | 1.664s      | 0.570s   | 
+| 10         | 0.092s     | 0.0036s | 0.528s      | 0.370s   | 
+| 100        | 0.026s     | 0.0036s | 0.414s      | 0.352s   | 
 
 #### Performance Analysis
 
-**C++ Advantages:**
-- **Exceptional performance**: Up to 1,851x faster for single loads
-- **Consistent sub-millisecond latency**: ~0.3-3.7ms regardless of iterations
-- **Scales across file sizes**: Maintains superior performance for all model sizes
-- **Production-optimized**: Highly optimized memory access and tensor creation
+**C++ CPU - Ultimate Performance:**
+- **Exceptional speed**: Up to 1,851x faster than Python CPU
+- **Sub-millisecond latency**: Consistent 0.3-3.7ms performance
+- **Memory efficient**: Direct memory access without GPU transfer overhead
+- **Production optimal**: Best choice for inference servers
 
-**Python Advantages:**
-- **Good cache utilization**: Performance improves with repeated access
-- **Mature ecosystem**: Well-integrated with PyTorch and ML workflows
+**C++ CUDA - GPU Integration:**
+- **GPU-ready tensors**: Direct CUDA memory allocation
+- **Faster than Python CUDA**: 2.9-4.3x improvement
+- **Good for GPU workflows**: When tensors need to be on GPU anyway
+- **Transfer overhead**: Includes CPU→GPU memory transfer time
 
 **Key Insights:**
-1. **C++ dominates all scenarios**: Faster across all file sizes and iteration counts
-2. **Extreme speedups**: From 7x to 1,851x performance improvement
-3. **Sub-millisecond performance**: C++ achieves consistent ultra-low latency
-4. **Scalable**: Performance advantage maintained even with repeated access
+1. **C++ CPU dominates**: Fastest across all scenarios due to zero-copy access
+2. **CUDA has transfer overhead**: CPU→GPU memory copy adds latency
+3. **Choose CPU for pure speed**: Use CUDA only when GPU tensors are required
+4. **Consistent C++ advantage**: Superior performance regardless of device or iterations
 
-#### Recommended Usage
+#### Device-Specific Recommendations
+
+**For Maximum Speed (Inference/Loading):**
+```bash
+# Use C++ CPU for ultimate performance
+./build/bindings/cpp/benchmark/bench_cpp model.safetensors 1
+
+# Python CPU comparison
+python bindings/cpp/benchmark/bench.py model.safetensors 1 --device cpu
+```
+
+**For GPU Workflows (Training/GPU Processing):**
+```bash
+# Use C++ CUDA when tensors need to be on GPU
+./build/bindings/cpp/benchmark/bench_cpp model.safetensors 1 cuda
+
+# Python CUDA comparison  
+python bindings/cpp/benchmark/bench.py model.safetensors 1 --device cuda
+```
 
 **For any production use case, C++ bindings provide dramatic performance benefits:**
 

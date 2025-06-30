@@ -43,12 +43,13 @@ torch::Dtype to_torch_dtype(safetensors::Dtype dtype) {
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <path_to_safetensors_file> [<loop_count>]"
+    std::cerr << "Usage: " << argv[0] << " <path_to_safetensors_file> [<loop_count>] [<deice>(default: cpu)]"
               << std::endl;
     return 1;
   }
 
   int loop_count = 1;
+  bool cuda = false;
   if (argc > 2) {
     try {
       loop_count = std::stoi(argv[2]);
@@ -59,6 +60,17 @@ int main(int argc, char* argv[]) {
     } catch (const std::invalid_argument&) {
       std::cerr << "Invalid loop count: " << argv[2] << std::endl;
       return 1;
+    }
+    if (argc > 3) {
+      std::string device = argv[3];
+      if (device == "cuda") {
+        cuda = true;
+      } else if (device == "cpu") {
+        cuda = false;
+      } else {
+        std::cerr << "Invalid device: " << device << std::endl;
+        return 1;
+      }
     }
   }
 
@@ -74,10 +86,17 @@ int main(int argc, char* argv[]) {
       std::transform(
           tensor.shape.begin(), tensor.shape.end(), std::back_inserter(shape),
           [](const auto& dim) { return static_cast<std::int64_t>(dim); });
+      auto blob = torch::from_blob(
+                    const_cast<void*>(tensor.data_ptr), shape,
+                    torch::TensorOptions().dtype(to_torch_dtype(tensor.dtype)).pinned_memory(true));
+      if (cuda) {
+        tensors.insert(
+            std::move(key), std::move(blob.to(torch::kCUDA, true)));
+      } else {
+        // Use pinned memory for CPU tensors
       tensors.insert(
-          key, torch::from_blob(
-                  const_cast<void*>(tensor.data_ptr), shape,
-                  torch::TensorOptions().dtype(to_torch_dtype(tensor.dtype)).pinned_memory(true)));
+          std::move(key), std::move(blob));
+      }
     }
   }
   
